@@ -380,7 +380,7 @@ class SUEP_cluster(processor.ProcessorABC):
 
         return events, band, tracksinBand
 
-    def selectByGEN(self, events):
+    def selectByGEN(self, events): #STAR
         GenParts = ak.zip({
             "pt": events.GenPart.pt,
             "eta": events.GenPart.eta,
@@ -1079,7 +1079,7 @@ class SUEP_cluster(processor.ProcessorABC):
                     out["leadcluster_pt"]      = self.clusters.pt[:,0]
                     out["leadcluster_eta"]     = self.clusters.eta[:,0]
                     out["leadcluster_phi"]     = self.clusters.phi[:,0]
-                    out["leadcluster_ntracks"] = ak.num(self.constituents[:,0], axis = 1)
+                    out["leadcluster_ntracks"] = ak.num(self.constituents[:,0], axis = 1) #STAR
                     out["leadcluster_m"]     = self.clusters.mass[:,0]
 
                     boost_leading = ak.zip({
