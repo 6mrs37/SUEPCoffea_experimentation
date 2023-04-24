@@ -22,12 +22,12 @@ from workflows.CMS_corrections.jetmet_utils import apply_jecs
 vector.register_awkward()
 
 class SUEP_cluster(processor.ProcessorABC):
-    def __init__(self, isMC: int, era: int, sample: str,  do_syst: bool, syst_var: str, weight_syst: bool, SRonly: bool, output_location: Optional[str], doOF: Optional[bool], isDY: Optional[bool]) -> None:
+    def __init__(self, isMC: int, era: int, sample: str,  do_syst: bool, syst_var: str, weight_syst: bool, SRonly: bool, output_location: Optional[str], doOF: Optional[bool], isDY: Optional[bool], doTracksGenMatching: Optional[bool]) -> None:
         self.SRonly = SRonly
         self.output_location = output_location
         self.doOF = doOF
         self.isDY = isDY # We need to save this to remove the overlap between the inclusive DY sample and the pT binned ones
-        self.do_syst = (do_syst and isMC!=0)
+        self.do_syst = do_syst
         self.gensumweight = 1.0
         self.era = era
         self.isMC = isMC
@@ -38,7 +38,7 @@ class SUEP_cluster(processor.ProcessorABC):
         self.prefixes = {"SUEP": "SUEP"}
         #Set up for the histograms
         self._accumulator = processor.dict_accumulator({})
-
+        self.doTracksGenMatching = doTracksGenMatching
     @property
     def accumulator(self):
         return self._accumulator
@@ -184,9 +184,9 @@ class SUEP_cluster(processor.ProcessorABC):
     def selectByFilters(self, events):
         ### Apply MET filter selection (see https://twiki.cern.ch/twiki/bin/viewauth/CMS/MissingETOptionalFiltersRun2)
         if self.era == 2018 or self.era == 2017:
-           cutAnyFilter = (events.Flag.goodVertices) & (events.Flag.globalSuperTightHalo2016Filter) & (events.Flag.HBHENoiseFilter) & (events.Flag.HBHENoiseIsoFilter) & (events.Flag.EcalDeadCellTriggerPrimitiveFilter) & (events.Flag.BadPFMuonFilter) & (events.Flag.BadPFMuonDzFilter) & (events.Flag.eeBadScFilter) & (events.Flag.ecalBadCalibFilter)
+           cutAnyFilter = (events.Flag.goodVertices) | (events.Flag.globalSuperTightHalo2016Filter) | (events.Flag.HBHENoiseFilter) | (events.Flag.HBHENoiseIsoFilter) | (events.Flag.EcalDeadCellTriggerPrimitiveFilter) | (events.Flag.BadPFMuonFilter) | (events.Flag.BadPFMuonDzFilter) | (events.Flag.eeBadScFilter) | (events.Flag.ecalBadCalibFilter)
         if self.era == 2016 or self.era == 2015: # 2015==2016APV
-           cutAnyFilter = (events.Flag.goodVertices) & (events.Flag.globalSuperTightHalo2016Filter) & (events.Flag.HBHENoiseFilter) & (events.Flag.HBHENoiseIsoFilter) & (events.Flag.EcalDeadCellTriggerPrimitiveFilter) & (events.Flag.BadPFMuonFilter) & (events.Flag.BadPFMuonDzFilter) & (events.Flag.eeBadScFilter)
+           cutAnyFilter = (events.Flag.goodVertices) | (events.Flag.globalSuperTightHalo2016Filter) | (events.Flag.HBHENoiseFilter) | (events.Flag.HBHENoiseIsoFilter) | (events.Flag.EcalDeadCellTriggerPrimitiveFilter) | (events.Flag.BadPFMuonFilter) | (events.Flag.BadPFMuonDzFilter) | (events.Flag.eeBadScFilter)
         return events[cutAnyFilter]
 
 
@@ -225,8 +225,8 @@ class SUEP_cluster(processor.ProcessorABC):
         ###  Some very simple selections on ID ###
         ###  Muons: loose ID + dxy dz cuts mimicking the medium prompt ID https://twiki.cern.ch/twiki/bin/viewauth/CMS/SWGuideMuonIdRun2
         ###  Electrons: loose ID + dxy dz cuts for promptness https://twiki.cern.ch/twiki/bin/view/CMS/EgammaCutBasedIdentification
-        cutMuons     = (events.Muon.looseId) & (events.Muon.pt >= 10) & (abs(events.Muon.dxy) <= 0.02) & (abs(events.Muon.dz) <= 0.1) & (events.Muon.pfIsoId >= 2) & (abs(events.Muon.eta) < 2.4)
-        cutElectrons = (events.Electron.pt >= 10) & (events.Electron.mvaFall17V2Iso_WP90) & ( abs(events.Electron.dxy) < (0.05 + 0.05*(abs(events.Electron.eta) > 1.479))) & (abs(events.Electron.dz) < (0.10 + 0.10*(events.Electron.eta > 1.479))) & ((abs(events.Electron.eta) < 1.444) | (abs(events.Electron.eta) > 1.566)) & (abs(events.Electron.eta) < 2.5)
+        cutMuons     = (events.Muon.looseId) & (events.Muon.pt >= 10) & (abs(events.Muon.dxy) <= 0.02) & (abs(events.Muon.dz) <= 0.1) & (events.Muon.pfIsoId >= 2)
+        cutElectrons = (events.Electron.cutBased >= 2) & (events.Electron.pt >= 15) & (events.Electron.mvaFall17V2Iso_WP90) & ( abs(events.Electron.dxy) < 0.05 + 0.05*(events.Electron.eta > 1.479)) & (abs(events.Electron.dz) <  0.10 + 0.10*(events.Electron.eta > 1.479)) & ((abs(events.Electron.eta) < 1.444) | (abs(events.Electron.eta) > 1.566))
 
         ### Apply the cuts
         # Object selection. selMuons contain only the events that are filtered by cutMuons criteria.
@@ -240,7 +240,7 @@ class SUEP_cluster(processor.ProcessorABC):
         #  Second, pt of the muons is greater than 25.
         #  Third, Sum of charge of muons should be 0. (because it originates from Z)
         if self.doOF:
-            # Only for the OF sideband
+            # Only for the OF sideband for tt/WW/Fakes estimation
             templeps = ak.concatenate([selMuons,selElectrons], axis=1)
             cutHasOFLeps =  (ak.num(templeps, axis=1)==2) & (ak.max(templeps.pt, axis=1, mask_identity=False) >= 25) & (ak.sum(templeps.charge,axis=1) == 0) 
             events = events[cutHasOFLeps]
@@ -254,13 +254,14 @@ class SUEP_cluster(processor.ProcessorABC):
         else:
             cutHasTwoMuons = (ak.num(selMuons, axis=1)==2) & (ak.max(selMuons.pt, axis=1, mask_identity=False) >= 25) & (ak.sum(selMuons.charge,axis=1) == 0)
             cutHasTwoElecs = (ak.num(selElectrons, axis=1)==2) & (ak.max(selElectrons.pt, axis=1, mask_identity=False) >= 25) & (ak.sum(selElectrons.charge,axis=1) == 0)
-            cutTwoLeps     = ((ak.num(selElectrons, axis=1)+ak.num(selMuons, axis=1)) < 3)
+            cutTwoLeps     = ((ak.num(selElectrons, axis=1)+ak.num(selMuons, axis=1)) < 4)
             cutHasTwoLeps  = ((cutHasTwoMuons) | (cutHasTwoElecs)) & cutTwoLeps
             ### Cut the events, also return the selected leptons for operation down the line
             events = events[cutHasTwoLeps]
             selElectrons = selElectrons[cutHasTwoLeps]
             selMuons = selMuons[cutHasTwoLeps]
-        return events, selElectrons, selMuons 
+          
+        return events, selElectrons, selMuons #, [coll[cutHasTwoLeps] for coll in extraColls]
 
     def selectByJets(self, events, leptons = [],  altJets = [], extraColls = []):
         # These are just standard jets, as available in the nanoAOD
@@ -300,13 +301,14 @@ class SUEP_cluster(processor.ProcessorABC):
             "pt": events.PFCands.trkPt,
             "eta": events.PFCands.trkEta,
             "phi": events.PFCands.trkPhi,
-            "mass": events.PFCands.mass
+            "mass": events.PFCands.mass,
+            "fromSUEP": False,
         }, with_name="Momentum4D")
 
         cutPF = (events.PFCands.fromPV > 1) & \
             (events.PFCands.trkPt >= 1) & \
             (abs(events.PFCands.trkEta) <= 2.5) & \
-            (abs(events.PFCands.dz) < 0.05) & \
+            (abs(events.PFCands.dz) < 10) & \
             (abs(events.PFCands.d0) < 0.05) & \
             (events.PFCands.puppiWeight > 0.1)
             #(events.PFCands.dzErr < 0.05)
@@ -318,13 +320,14 @@ class SUEP_cluster(processor.ProcessorABC):
             "pt": events.lostTracks.pt,
             "eta": events.lostTracks.eta,
             "phi": events.lostTracks.phi,
-            "mass": 0.0
+            "mass": 0.0,
+            "fromSUEP": False,
         }, with_name="Momentum4D")
 
         cutLost = (events.lostTracks.fromPV > 1) & \
             (events.lostTracks.pt >= 1) & \
-            (abs(events.lostTracks.eta) <= 2.5) & \
-            (abs(events.lostTracks.dz) < 0.05) & \
+            (abs(events.lostTracks.eta) <= 2.5) \
+            & (abs(events.lostTracks.dz) < 0.05) & \
             (abs(events.lostTracks.d0) < 0.05) & \
             (events.lostTracks.puppiWeight > 0.1)
             #(events.lostTracks.dzErr < 0.05)
@@ -332,6 +335,43 @@ class SUEP_cluster(processor.ProcessorABC):
 
         # dimensions of tracks = events x tracks in event x 4 momenta
         totalTracks = ak.concatenate([Cleaned_cands, Lost_Tracks_cands], axis=1)
+        if self.doTracksGenMatching: # Not always activated, as quite time consuming and only needed for specific tests
+          #### SIMTRACKS, for gen matching association ####
+          SimTracks = ak.zip({
+            "pt": events.SimTracks.pt,
+            "eta": events.SimTracks.eta,
+            "phi": events.SimTracks.phi,
+            "mass":  events.SimTracks.mass,
+            "igen": events.SimTracks.igenPart,
+            "fromSUEP": False,
+          }, with_name="Momentum4D")
+          #### SIMTRACK - GENPART Matching (This is done based on geant hit info
+          GenParts  = ak.zip({
+            "pdgId"   : events.GenPart.pdgId,
+            "motherId": events.GenPart.genPartIdxMother,
+            "status"  : events.GenPart.status,
+            "fromSUEP": -1,
+          })
+          while(ak.any(GenParts.fromSUEP < 0)):
+            # To each GenPart assign to a SUEP if it appears on the decay of a SUEP, while loop iterates over the decay chain
+            #print(ak.sum(GenParts.fromSUEP == -4), ak.sum(GenParts.fromSUEP == -3), ak.sum(GenParts.fromSUEP == -1), ak.sum(GenParts.fromSUEP == -0), ak.sum(GenParts.fromSUEP == 1),ak.sum(GenParts.fromSUEP == 2), ak.sum(GenParts.fromSUEP == 3), ak.sum(GenParts.fromSUEP == 4))
+            GenParts.fromSUEP = ak.where((GenParts.motherId == -1) & (GenParts.fromSUEP==-3) ,   3, GenParts.fromSUEP) # UE
+            GenParts.fromSUEP = ak.where((GenParts.motherId == -1) & (GenParts.fromSUEP==-4) ,   4, GenParts.fromSUEP) # ISR
+            GenParts.fromSUEP = ak.where((GenParts.motherId == -1) & (GenParts.fromSUEP==-1) ,   0, GenParts.fromSUEP)    # 0 means matched to PU
+            GenParts.fromSUEP = ak.where(GenParts.pdgId    ==  999998, 1, GenParts.fromSUEP) # 1 means matched to SUEP
+            GenParts.fromSUEP = ak.where(GenParts.pdgId    ==  23    , 2, GenParts.fromSUEP) # 2 means matched to Z
+            GenParts.fromSUEP = ak.where((GenParts.status   ==  63) & (GenParts.fromSUEP < 0)  , -3, GenParts.fromSUEP) # -3 means UE track
+            GenParts.fromSUEP = ak.where((GenParts.status   ==  61) & (GenParts.fromSUEP < 0)  , -4, GenParts.fromSUEP) # -4 means emission from primary but it can still be H/Z so -1 until chain ends
+            GenParts.pdgId    = ak.where(GenParts.fromSUEP < 0, GenParts[GenParts.motherId].pdgId, GenParts.pdgId)
+            GenParts.motherId = ak.where(GenParts.fromSUEP < 0, GenParts[GenParts.motherId].motherId, GenParts.motherId)
+            GenParts.status = ak.where(GenParts.fromSUEP < 0, GenParts[GenParts.motherId].status, GenParts.status)
+            GenParts.fromSUEP = ak.where(GenParts.pdgId    ==  999998, 1, GenParts.fromSUEP)
+          # SimTrack - GenPart association is saved in our customized miniAOD (=>customized nanoAOD) already
+          SimTracks.fromSUEP   = ak.where(SimTracks.igen >= 0, GenParts.fromSUEP[SimTracks.igen] == 1, False)
+          newtotaltracks, newsimtracks = ak.unzip(ak.cartesian([totalTracks, SimTracks], axis=1, nested=True))
+          alldr2 = newtotaltracks.deltaR2(newsimtracks)
+          # SimTrack - RecoTrack association done geometrically, choose closest track within dR < 0.01
+          totalTracks.fromSUEP = ak.where(ak.min(alldr2, axis=2) < 0.01, SimTracks.fromSUEP[ak.argmin(alldr2, axis=2)], False)
 
         # Sorting out the tracks that overlap with leptons
         totalTracks = totalTracks[(totalTracks.deltaR(leptons[:,0])>= 0.4) & (totalTracks.deltaR(leptons[:,1])>= 0.4)]
@@ -340,16 +380,14 @@ class SUEP_cluster(processor.ProcessorABC):
 
     def clusterizeTracks(self, events, tracks):
         # anti-kt, dR=1.5 jets
-        nSmallEvents = 1000
-        smallEvents = len(events) < nSmallEvents
+        smallEvents = len(events) < 5000 # This is a trick so the job reserves enough memory for the clustering step and FastJet doesn't go into overflow
         if not smallEvents:
           jetdef = fastjet.JetDefinition(fastjet.antikt_algorithm, 1.5)        
           cluster = fastjet.ClusterSequence(tracks, jetdef)
           ak15_jets   = ak.with_name(cluster.inclusive_jets(min_pt=0),"Momentum4D") # These are the ak15_jets
           ak15_consts = ak.with_name(cluster.constituents(min_pt=0),"Momentum4D")   # And these are the collections of constituents of the ak15_jets
-          return events, ak15_jets, ak15_consts
         else: #With few events/file the thing crashes because of FastJet so we are going to create "fake" events
-          ncopies     = round(nSmallEvents/(len(events)))
+          ncopies     = round(5000/(len(events)))
           oldtracks   = tracks
           for i in range(ncopies):
             tracks = ak.concatenate([tracks, oldtracks], axis=0) # I.e. duplicate our events until we are feeding 1000 events to the clusterizer
@@ -358,14 +396,40 @@ class SUEP_cluster(processor.ProcessorABC):
           ak15_jets   = ak.with_name(cluster.inclusive_jets(min_pt=0),"Momentum4D") # These are the ak15_jets
           ak15_consts = ak.with_name(cluster.constituents(min_pt=0),"Momentum4D")   # And these are the collections of constituents of the ak15_jets
           # But now we have to delete the repeated set of events
-          return events, ak15_jets[:len(oldtracks)], ak15_consts[:len(oldtracks)]
+          ak15_jets = ak15_jets[:len(oldtracks)]
+          ak15_consts = ak15_consts[:len(oldtracks)]
+          tracks = tracks[:len(oldtracks)]
+        # Now recast the constituents back again so we can read the info of fromSUEP from the original tracks, as tagging is lost in fastJet
+        ak15_consts = ak.zip({
+            "pt": ak15_consts.pt,
+            "eta": ak15_consts.eta,
+            "phi": ak15_consts.phi,
+            "mass":  ak15_consts.mass,
+            "fromSUEP": False,
+        }, with_name="Momentum4D")
+        if self.doTracksGenMatching:
+          # This one is complicated
+          # First, get the constituents into a matrix
+          # Save the shape for later
+          shape = ak.num(ak15_consts, axis=2)
+          # Flatten the constituents on the 2nd dimension (constituents axis)
+          ak15_consts = ak.flatten(ak15_consts, axis=2)
+          # Make all possible dR pairs to find the closest track to a constituent
+          newak15_consts, newtracks = ak.unzip(ak.cartesian([ak15_consts, tracks], axis=1, nested=True))
+          alldr2 = newak15_consts.deltaR2(newtracks)
+          ak15_consts.fromSUEP = ak.where(ak.min(alldr2, axis=2) < 0.01, tracks.fromSUEP[ak.argmin(alldr2, axis=2)], False) # I.e. if dR(track, constituent) < 0.01 for at least one track, constituent inherits tagging of the closest track
+          # And then we recast it to the proper size with this thing
+          ak15_consts = ak.unflatten(ak15_consts, ak.flatten(shape), axis=1)
+
+        return events, ak15_jets, ak15_consts
+
 
     def striptizeTracks(self, events, tracks, etaWidth=0.75):
-        etaCenters = np.linspace(-2.5, 2.5, 50) # Scan 50 eta values
+        etaCenters = np.linspace(-2.5, 2.5, 50) # Scan 50 eta values, so 0.1 resolution
         tracksinBand = tracks
         nInBand      = ak.num(tracks) * -1 # So we always get towards better stuff
+        
         for etaC in etaCenters:
-            #print("Striptizing... %1.1f/%1.1f"%(etaC,etaWidth))
             cutInBand    = (tracks.eta >= (etaC - etaWidth)) & (tracks.eta < (etaC + etaWidth))
             trackstest   = tracks[cutInBand]
             ntest        = ak.num(trackstest)
@@ -380,7 +444,7 @@ class SUEP_cluster(processor.ProcessorABC):
 
         return events, band, tracksinBand
 
-    def selectByGEN(self, events): #STAR
+    def selectByGEN(self, events):
         GenParts = ak.zip({
             "pt": events.GenPart.pt,
             "eta": events.GenPart.eta,
@@ -389,7 +453,7 @@ class SUEP_cluster(processor.ProcessorABC):
             "pdgId": events.GenPart.pdgId,
         }, with_name="Momentum4D")
         if self.isDY:
-            # Build the Zpt from leptons for the DY sample bug. Somehow awkward but needed as gammastar is not saved...
+            # Build the Zpt from leptons. Somehow awkward but needed as gammastar is not saved...
             cutgenLepsNeg = (events.GenPart.pdgId >= 11) & (events.GenPart.pdgId <= 16) & (abs(events.GenPart.status - 25) < 6) # Leptons from the hard scattering
             cutgenLepsPos = (events.GenPart.pdgId >= -16) & (events.GenPart.pdgId <= -11) & (abs(events.GenPart.status - 25) < 6) # Antileptons from the hard scattering
             cutgenZ    = (events.GenPart.pdgId == 23) & (events.GenPart.status == 22)
@@ -431,7 +495,7 @@ class SUEP_cluster(processor.ProcessorABC):
 
 
     def process(self, events):
-        np.random.seed(max(0,min(events.event[0], 2**31))) # This ensures reproducibility of results (i.e. for the random track dropping), while also getting different random numbers per file to avoid biases (like always dropping the first track, etc.
+        np.random.seed(max(0,min(events.event[0], 2**31))) # This ensures reproducibility of results (i.e. for the random track dropping), while also getting different random numbers per file to avoid biases (like always dropping the first track, etc.)
         debug    = True  # If we want some prints in the middle
         self.chunkTag = "out_%i_%i_%i.hdf5"%(events.event[0], events.luminosityBlock[0], events.run[0]) #Unique tag to get different outputs per tag
         fullFile = self.output_location + "/" + self.chunkTag
@@ -483,10 +547,6 @@ class SUEP_cluster(processor.ProcessorABC):
         self.leptons = ak.concatenate([self.electrons, self.muons], axis=1)
         highpt_leptons = ak.argsort(self.leptons.pt, axis=1, ascending=False, stable=True)
         self.leptons = self.leptons[highpt_leptons]
-        self.electrons = self.electrons[ak.argsort(self.electrons.pt, axis=1, ascending=False, stable=True)]
-        self.muons     = self.muons[ak.argsort(self.muons.pt, axis=1, ascending=False, stable=True)]
-
-
         if not(self.shouldContinueAfterCut(self.events, outputs)): return accumulator
         if debug: print("%i events pass trigger cuts. Selecting jets..."%len(self.events))
 
@@ -499,18 +559,19 @@ class SUEP_cluster(processor.ProcessorABC):
         if debug: print("%i events pass jet cuts. Selecting tracks..."%len(self.events))
         
         if self.doTracks:
-            # Right now no track cuts, only selecting tracks
+            # Right now no per event track cuts, only selecting tracks
             self.events, self.tracks = self.selectByTracks(self.events, self.leptons)[:2] # Again, we need leptons to clean the tracks
             if not(self.shouldContinueAfterCut(self.events, outputs)): return accumulator
             if debug: print("%i events pass track cuts. Doing track clustering..."%len(self.events))
             if self.doClusters:
+                # This is the ak15 clustering step
                 self.events, self.clusters, self.constituents  = self.clusterizeTracks(self.events, self.tracks)[:3]
                 highpt_clusters = ak.argsort(self.clusters.pt, axis=1, ascending=False, stable=True)
                 self.clusters   = self.clusters[highpt_clusters]
                 self.constituents = self.constituents[highpt_clusters]
 
         if self.doGen:
-            print("Do gen!")
+            if debug: print("Do gen!")
             if self.isDY: self.events, self.Zpt = self.selectByGEN(self.events)[:2]
             else: self.events, self.genZ, self.genH, self.genSUEP = self.selectByGEN(self.events)[:4]
             if not(self.shouldContinueAfterCut(self.events, outputs)): return accumulator
@@ -519,27 +580,26 @@ class SUEP_cluster(processor.ProcessorABC):
         ##### Finally, build additional composite objects
         # First the Z candidates
         self.Zcands = self.leptons[:,0] + self.leptons[:,1]
-        print("Now build systematics and weights")
+        if debug: print("Now build systematics and weights")
         if self.isMC:
           self.btagweights = self.doBTagWeights(self.events, self.jets, "L") # Does not change selection 
-          self.puweights   = self.doPUWeights(self.events)                                   # Does not change selection
+          self.puweights   = self.doPUWeights(self.events)                   # Does not change selection
           self.l1preweights= self.doPrefireWeights(self.events)
-          self.triggerSFs  = self.doTriggerSFs(self.electrons, self.muons)
-          self.leptonSFs   = self.doLeptonSFs(self.electrons, self.muons)
+
         # ------------------------------------------------------------------------------
         # ------------------------------- UNCERTAINTIES --------------------------------
         # ------------------------------------------------------------------------------
-        self.jetsVar   = {"": self.jets} # If not activated, always central jet collection
+        self.jetsVar   = {"": self.jets}   # If not activated, always central jet collection
         self.tracksVar = {"": self.tracks} # If not activated, always central jet collection
 
-        self.varsToDo = [""]           # If not activated just do nominal yields
+        self.varsToDo = [""]               # If not activated just do nominal yields
         if self.do_syst:
-          self.isrweights  = self.doISRWeights(self.events)                                  # Does not change selection
+          self.isrweights  = self.doISRWeights(self.events)                                    # Does not change selection
           if self.isSignal: 
             self.jetsVar     = self.doJECJERVariations(self.events, self.jets)                 # Does change selection, entry "" is central jets, entry "JECX" is JECUp/JECDown, entry "JERX" is JERUp/JerDown
 
           if self.doTracks: 
-            print("Start Tracks!")
+            if debug: print("Start Tracks!")
             self.tracksVar = self.doTracksDropping(self.events, self.tracks) # Does change selection, entry "" is central, "TRACKUP" is tracks modified
           outputsnew = {}
           for channel in outputs:
@@ -656,11 +716,7 @@ class SUEP_cluster(processor.ProcessorABC):
             for var in self.l1preweights:
                 self.l1preweights[var]  = self.l1preweights[var][cut]
 
-            for var in self.triggerSFs:
-                self.triggerSFs[var]  = self.triggerSFs[var][cut]
 
-            for var in self.leptonSFs:
-                self.leptonSFs[var]   = self.leptonSFs[var][cut]
         if self.doTracks:
             self.tracks  = self.tracks[cut]
             if self.doClusters:
@@ -695,12 +751,6 @@ class SUEP_cluster(processor.ProcessorABC):
             self.safel1preweights = {}
             for var in self.l1preweights:
                 self.safel1preweights[var]  = self.l1preweights[var]
-            self.safetriggerSFs = {}
-            for var in self.triggerSFs:
-                self.safetriggerSFs[var]  = self.triggerSFs[var]
-            self.safeleptonSFs = {}
-            for var in self.leptonSFs:
-                self.safeleptonSFs[var]   = self.leptonSFs[var]
 
         if self.doTracks:
             self.safetracks  = self.tracks
@@ -730,10 +780,7 @@ class SUEP_cluster(processor.ProcessorABC):
                 self.puweights[var]  = self.safepuweights[var]
             for var in self.l1preweights:
                 self.l1preweights[var]  = self.safel1preweights[var]
-            for var in self.triggerSFs:
-                self.triggerSFs[var]  = self.safetriggerSFs[var]
-            for var in self.leptonSFs:
-                self.leptonSFs[var] = self.safeleptonSFs[var]
+
 
         if self.doTracks:
             self.tracks  = self.safetracks
@@ -839,85 +886,11 @@ class SUEP_cluster(processor.ProcessorABC):
         passHighPtTracks = highPtTracks[(randomHigh > probsHighPt[self.era])]
         # And then broadcast them together again
         return {"":tracks, "_TRACKUP":ak.concatenate([passLowPtTracks, passHighPtTracks], axis=1)}
-    
-    def doTriggerSFs(self, electrons, muons):
-        ceval = correctionlib.CorrectionSet.from_file("data/TriggerSF/masterJSON.json") ## Assuming we always run from root dir
-        year = str(self.era)
-        SF = {}
-
-        #Add flag indicating which Flavor was selected
-        leps = ak.concatenate([electrons.pt, -muons.pt], axis = 1)
-        #Split into Leading and Subleading Lepton
-        leps0temp, leps1temp= np.array(leps[:, 0]), np.array(leps[:, 1])
-        #Convert out-of-bounds pTs to maximum bin's value
-        leps0 = np.select([np.abs(leps0temp) > 199, np.abs(leps0temp) <= 199], [np.sign(leps0temp)*199.0, leps0temp])
-        leps1 = np.select([np.abs(leps1temp) > 199, np.abs(leps1temp) <= 199], [np.sign(leps1temp)*199.0, leps1temp])
-        if self.do_syst:
-            SF['TrigSF'] = np.where(leps0 > 0, ceval['UL-PtPt-Trigger-SFs'].evaluate(year,"sf","Electron", np.abs(leps1), np.abs(leps0)), #Check if Electron
-                           np.where(leps0 < 0, ceval['UL-PtPt-Trigger-SFs'].evaluate(year,"sf","Muon", np.abs(leps1), np.abs(leps0)), -999  #Check if Muon, if not insert invalid value
-                           ))
-            SF['TrigSFDn'] = np.where(leps0 > 0, ceval['UL-PtPt-Trigger-SFs'].evaluate(year,"sf-down","Electron", np.abs(leps1), np.abs(leps0)), #Check if Electron
-                           np.where(leps0 < 0, ceval['UL-PtPt-Trigger-SFs'].evaluate(year,"sf-down","Muon", np.abs(leps1), np.abs(leps0)), -999  #Check if Muon, if not insert invalid value
-                           ))
-            SF['TrigSFUp'] = np.where(leps0 > 0, ceval['UL-PtPt-Trigger-SFs'].evaluate(year,"sf-up","Electron", np.abs(leps1), np.abs(leps0)), #Check if Electron
-                           np.where(leps0 < 0, ceval['UL-PtPt-Trigger-SFs'].evaluate(year,"sf-up","Muon", np.abs(leps1), np.abs(leps0)), -999  #Check if Muon, if not insert invalid value
-                           ))
-        else:
-            SF['TrigSF'] = np.where(leps0 > 0, ceval['UL-PtPt-Trigger-SFs'].evaluate(year,"sf","Electron", np.abs(leps1), np.abs(leps0)), #Check if Electron
-                           np.where(leps0 < 0, ceval['UL-PtPt-Trigger-SFs'].evaluate(year,"sf","Muon", np.abs(leps1), np.abs(leps0)), -999  #Check if Muon, if not insert invalid value
-                           ))
-        return SF
-
-    def doLeptonSFs(self, electrons, muons):
-        if self.era == 2015:
-           tag = "16APV"
-           etag = "2016preVFP"
-        elif self.era == 2016:
-           tag = "16"
-           etag = "2016postVFP"
-        elif self.era == 2017:
-           tag = "17"
-           etag = "2017"
-        elif self.era == 2018:
-           tag = "18"
-           etag = "2018"
-
-        elecs, nelecs = ak.flatten(electrons), np.array(ak.num(electrons))
-        mus,     nmus = ak.flatten(muons), np.array(ak.num(muons))
-
-
-        elall  = correctionlib.CorrectionSet.from_file("data/EGammaUL%s/electron.json"%tag)["UL-Electron-ID-SF"]
-        muid  = correctionlib.CorrectionSet.from_file("data/MuUL%s/muon_Z.json"%tag)["NUM_LooseID_DEN_TrackerMuons"]
-        muiso =  correctionlib.CorrectionSet.from_file("data/MuUL%s/muon_Z.json"%tag)["NUM_LooseRelIso_DEN_LooseID"]
         
-        elSF   = np.where(elecs.pt > 20, elall.evaluate(etag,"sf","RecoAbove20", elecs.eta, np.where(elecs.pt <= 20, 20.001, elecs.pt)), elall.evaluate(etag,"sf","RecoBelow20", elecs.eta, np.where(abs(elecs.pt-15) >= 4.999, 15, elecs.pt) ))*elall.evaluate(etag,"sf","wp90iso", elecs.eta, elecs.pt)
-        elSFUp   = np.where(elecs.pt > 20, elall.evaluate(etag,"sfup","RecoAbove20", elecs.eta, np.where(elecs.pt <= 20, 20.001, elecs.pt)), elall.evaluate(etag,"sfup","RecoBelow20", elecs.eta, np.where(abs(elecs.pt-15) >= 4.999, 15, elecs.pt)))*elall.evaluate(etag,"sfup","wp90iso", elecs.eta, elecs.pt)
-        elSFDown = np.where(elecs.pt > 20, elall.evaluate(etag,"sfdown","RecoAbove20", elecs.eta, np.where(elecs.pt <= 20, 20.001, elecs.pt)), elall.evaluate(etag,"sfdown","RecoBelow20", elecs.eta, np.where(abs(elecs.pt-15) >= 4.999, 15, elecs.pt)))*elall.evaluate(etag,"sfdown","wp90iso", elecs.eta, elecs.pt)
-
-        muSF     = muid.evaluate(etag + "_UL", abs(mus.eta), np.where(mus.pt <= 15, 15.001, mus.pt), "sf")*muiso.evaluate(etag + "_UL", abs(mus.eta), np.where(mus.pt <= 15, 15.001, mus.pt), "sf")
-        muSFUp   = muid.evaluate(etag + "_UL", abs(mus.eta), np.where(mus.pt <= 15, 15.001, mus.pt), "systup")*muiso.evaluate(etag + "_UL", abs(mus.eta), np.where(mus.pt <= 15, 15.001, mus.pt), "systup")
-        muSFDown = muid.evaluate(etag + "_UL", abs(mus.eta), np.where(mus.pt <= 15, 15.001, mus.pt), "systdown")*muiso.evaluate(etag + "_UL", abs(mus.eta), np.where(mus.pt <= 15, 15.001, mus.pt), "systdown")
-
-        elSF     = ak.unflatten(elSF, nelecs)
-        elSFUp   = ak.unflatten(elSFUp, nelecs)
-        elSFDown = ak.unflatten(elSFDown, nelecs)
-        muSF     = ak.unflatten(muSF, nmus)
-        muSFUp   = ak.unflatten(muSFUp, nmus)
-        muSFDown = ak.unflatten(muSFDown, nmus)
-
-        lepSF = {}
-        lepSF["LepSF"]       = ak.prod(ak.concatenate([elSF, muSF]    , axis=1), axis = 1)
-        lepSF["LepSFElUp"]   = ak.prod(ak.concatenate([elSFUp, muSF]  , axis=1), axis = 1)
-        lepSF["LepSFElDown"] = ak.prod(ak.concatenate([elSFDown, muSF], axis=1), axis = 1)
-        lepSF["LepSFMuUp"]   = ak.prod(ak.concatenate([elSF, muSFUp]  , axis=1), axis = 1)
-        lepSF["LepSFMuDown"] = ak.prod(ak.concatenate([elSF, muSFDown], axis=1), axis = 1)
-        return lepSF
-
-
     def doBTagWeights(self, events, jetsPre, wp="L"):
-        jets, njets = ak.flatten(jetsPre), np.array(ak.num(jetsPre))
-        hadronFlavourLightAsB = np.array(np.where(jets.hadronFlavour == 0, 5, jets.hadronFlavour))
-        hadronFlavourBCAsLight= np.array(np.where(jets.hadronFlavour != 0, 0, jets.hadronFlavour))
+        jets, njets = ak.flatten(jetsPre), ak.num(jetsPre)
+        hadronFlavourLightAsB = np.where(jets.hadronFlavour == 0, 5, jets.hadronFlavour)
+        hadronFlavourBCAsLight= np.where(jets.hadronFlavour != 0, 0, jets.hadronFlavour)
         if self.era == 2015:
             btagfile = "data/BTagUL16APV/btagging.json.gz"
             btagfileL = "data/BTagUL16/btagging.json.gz"
@@ -933,19 +906,17 @@ class SUEP_cluster(processor.ProcessorABC):
         corrector = correctionlib.CorrectionSet.from_file(btagfile)
         correctorL = correctionlib.CorrectionSet.from_file(btagfileL)
         SF = {}
-        flattened_pt = np.array(jets.pt)
-        flattened_eta = np.array(np.abs(jets.eta))
-        SF["central"] = corrector["deepJet_comb"].evaluate("central", wp, hadronFlavourLightAsB, flattened_eta, flattened_pt) # SF per jet, later argument is dummy as will be overwritten next
-        SF["central"] = np.where(abs(jets.hadronFlavour) == 0, correctorL["deepJet_incl"].evaluate("central", wp, hadronFlavourBCAsLight, flattened_eta,flattened_pt) ,SF["central"])
+        SF["central"] = corrector["deepJet_comb"].evaluate("central", wp, hadronFlavourLightAsB, np.abs(jets.eta),jets.pt) # SF per jet, later argument is dummy as will be overwritten next
+        SF["central"] = np.where(abs(jets.hadronFlavour) == 0, correctorL["deepJet_incl"].evaluate("central", wp, hadronFlavourBCAsLight, np.abs(jets.eta),jets.pt) ,SF["central"])
         if self.do_syst:
-            SF["HFcorrelated_Up"] = np.where((abs(jets.hadronFlavour) == 4) | (abs(jets.hadronFlavour) == 5), corrector["deepJet_comb"].evaluate("up_correlated", wp, hadronFlavourLightAsB,flattened_eta,flattened_pt), SF["central"])
-            SF["HFcorrelated_Dn"] = np.where((abs(jets.hadronFlavour) == 4) | (abs(jets.hadronFlavour) == 5), corrector["deepJet_comb"].evaluate("down_correlated", wp, hadronFlavourLightAsB,flattened_eta,flattened_pt), SF["central"]) 
-            SF["HFuncorrelated_Up"] = np.where((abs(jets.hadronFlavour) == 4) | (abs(jets.hadronFlavour) == 5), corrector["deepJet_comb"].evaluate("up_uncorrelated", wp, hadronFlavourLightAsB,flattened_eta,flattened_pt), SF["central"])
-            SF["HFuncorrelated_Dn"] = np.where((abs(jets.hadronFlavour) == 4) | (abs(jets.hadronFlavour) == 5), corrector["deepJet_comb"].evaluate("down_uncorrelated", wp, hadronFlavourLightAsB,flattened_eta,flattened_pt), SF["central"])
-            SF["LFcorrelated_Up"] = np.where(abs(jets.hadronFlavour) == 0, correctorL["deepJet_incl"].evaluate("up_correlated", wp, hadronFlavourBCAsLight,flattened_eta,flattened_pt), SF["central"])
-            SF["LFcorrelated_Dn"] = np.where(abs(jets.hadronFlavour) == 0, correctorL["deepJet_incl"].evaluate("down_correlated", wp, hadronFlavourBCAsLight,flattened_eta,flattened_pt), SF["central"])
-            SF["LFuncorrelated_Up"] = np.where(abs(jets.hadronFlavour) == 0, correctorL["deepJet_incl"].evaluate("up_uncorrelated", wp, hadronFlavourBCAsLight,flattened_eta,flattened_pt), SF["central"])
-            SF["LFuncorrelated_Dn"] = np.where(abs(jets.hadronFlavour) == 0, correctorL["deepJet_incl"].evaluate("down_uncorrelated", wp, hadronFlavourBCAsLight,flattened_eta,flattened_pt), SF["central"])
+            SF["HFcorrelated_Up"] = np.where((abs(jets.hadronFlavour) == 4) | (abs(jets.hadronFlavour) == 5), corrector["deepJet_comb"].evaluate("up_correlated", wp, hadronFlavourLightAsB,np.abs(jets.eta),jets.pt), SF["central"])
+            SF["HFcorrelated_Dn"] = np.where((abs(jets.hadronFlavour) == 4) | (abs(jets.hadronFlavour) == 5), corrector["deepJet_comb"].evaluate("down_correlated", wp, hadronFlavourLightAsB,np.abs(jets.eta),jets.pt), SF["central"]) 
+            SF["HFuncorrelated_Up"] = np.where((abs(jets.hadronFlavour) == 4) | (abs(jets.hadronFlavour) == 5), corrector["deepJet_comb"].evaluate("up_uncorrelated", wp, hadronFlavourLightAsB,np.abs(jets.eta),jets.pt), SF["central"])
+            SF["HFuncorrelated_Dn"] = np.where((abs(jets.hadronFlavour) == 4) | (abs(jets.hadronFlavour) == 5), corrector["deepJet_comb"].evaluate("down_uncorrelated", wp, hadronFlavourLightAsB,np.abs(jets.eta),jets.pt), SF["central"])
+            SF["LFcorrelated_Up"] = np.where(abs(jets.hadronFlavour) == 0, correctorL["deepJet_incl"].evaluate("up_correlated", wp, hadronFlavourBCAsLight,np.abs(jets.eta),jets.pt), SF["central"])
+            SF["LFcorrelated_Dn"] = np.where(abs(jets.hadronFlavour) == 0, correctorL["deepJet_incl"].evaluate("down_correlated", wp, hadronFlavourBCAsLight,np.abs(jets.eta),jets.pt), SF["central"])
+            SF["LFuncorrelated_Up"] = np.where(abs(jets.hadronFlavour) == 0, correctorL["deepJet_incl"].evaluate("up_uncorrelated", wp, hadronFlavourBCAsLight,np.abs(jets.eta),jets.pt), SF["central"])
+            SF["LFuncorrelated_Dn"] = np.where(abs(jets.hadronFlavour) == 0, correctorL["deepJet_incl"].evaluate("down_uncorrelated", wp, hadronFlavourBCAsLight,np.abs(jets.eta),jets.pt), SF["central"])
         effs = self.getBTagEffs(events, jets, wp)
         wps = {"L": "Loose", "M": "Medium", "T":"Tight"} # For safe conversion
         weights = {}
@@ -996,7 +967,7 @@ class SUEP_cluster(processor.ProcessorABC):
         out = {}
         # Define outputs for plotting
         if debug: print("Saving reco variables for channel %s"%channel)
-        out["run"]           = self.events.run[:]
+
         # Object: leptons
         out["leadlep_pt"]    = self.leptons.pt[:,0]
         out["subleadlep_pt"] = self.leptons.pt[:,1]
@@ -1038,8 +1009,7 @@ class SUEP_cluster(processor.ProcessorABC):
            out["bTagWeight"] = self.btagweights["central"][:]
            out["PUWeight"]               = self.puweights["PUWeight"][:]
            out["L1prefireWeight"]        = self.l1preweights["L1prefire_nom"][:]
-           out["TrigSF"] = self.triggerSFs["TrigSF"][:]
-           out["LepSF"]  = self.leptonSFs["LepSF"][:]
+
 
         if self.var == "" and self.do_syst:
            out["bTagWeight_HFCorr_Up"]   = self.btagweights["HFcorrelated_Up"][:]
@@ -1062,14 +1032,6 @@ class SUEP_cluster(processor.ProcessorABC):
            out["FSRWeight_Up"]           = self.isrweights["PSWeight_FSRUP"][:]
            out["FSRWeight_Dn"]           = self.isrweights["PSWeight_FSRDOWN"][:]
 
-           out["TrigSF_Up"]               = self.triggerSFs["TrigSFUp"][:]
-           out["TrigSF_Dn"]               = self.triggerSFs["TrigSFDn"][:]
-
-           out["LepSF_ElUp"]  = self.leptonSFs["LepSFElUp"][:]
-           out["LepSF_ElDn"]  = self.leptonSFs["LepSFElDown"][:]
-           out["LepSF_MuUp"]  = self.leptonSFs["LepSFMuUp"][:]
-           out["LepSF_MuDn"]  = self.leptonSFs["LepSFMuDown"][:]
-
 
         if self.doTracks:
             out["ntracks"]     = ak.num(self.tracks, axis=1)[:]
@@ -1079,9 +1041,7 @@ class SUEP_cluster(processor.ProcessorABC):
                     out["leadcluster_pt"]      = self.clusters.pt[:,0]
                     out["leadcluster_eta"]     = self.clusters.eta[:,0]
                     out["leadcluster_phi"]     = self.clusters.phi[:,0]
-                    out["leadcluster_ntracks"] = ak.num(self.constituents[:,0], axis = 1) #STAR
-                    out["leadcluster_m"]     = self.clusters.mass[:,0]
-
+                    out["leadcluster_ntracks"] = ak.num(self.constituents[:,0], axis = 1)
                     boost_leading = ak.zip({
                       "px": self.clusters[:,0].px*-1,
                       "py": self.clusters[:,0].py*-1,
@@ -1115,4 +1075,3 @@ class SUEP_cluster(processor.ProcessorABC):
 
     def postprocess(self, accumulator):
         return accumulator
- 
