@@ -506,7 +506,8 @@ class SUEP_cluster(processor.ProcessorABC):
 
         self.doTracks   = True  # Make it false, and it will speed things up but not run the tracks
         self.doClusters = True  # Make it false, and it will speed things up but not run the clusters
-		self.doGen      = True # We want info -- normally false
+        self.doGen      = False if not(self.isDY) else True # In case we want info on the gen level, we do need it for the buggy DY samples (to get proper stitching)
+
         # Main processor code
         # ------------------------------------------------------------------------------------
         # ------------------------------- DEFINE OUTPUTS -------------------------------------
@@ -524,8 +525,7 @@ class SUEP_cluster(processor.ProcessorABC):
         dataset = events.metadata['dataset']
         if self.isMC: self.gensumweight = ak.sum(events.genWeight)
 
-        #if not(self.isMC): doGen = False # Go away
-		doGen = True
+        if not(self.isMC): doGen = False
 
         # ------------------------------------------------------------------------------------
         # ------------------------------- OBJECT LOADING -------------------------------------
@@ -958,7 +958,8 @@ class SUEP_cluster(processor.ProcessorABC):
                    "_JERDOWN": self.selectByJets(events, self.leptons, jets_corrected["JER"].down)[1],
                   }
         return jetsOut
-    
+
+
     def doAllPlots(self, channel, debug=True):
         # ------------------------------------------------------------------------------
         # ------------------------------- PLOTTING -------------------------------------
