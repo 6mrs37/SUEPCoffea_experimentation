@@ -501,7 +501,7 @@ class SUEP_cluster(processor.ProcessorABC):
         fullFile = self.output_location + "/" + self.chunkTag
         print("Check file %s"%fullFile)
         if os.path.isfile(fullFile): 
-            print("SKIP")
+            print("SKIP\n")
             return self.accumulator.identity()
 
         self.doTracks   = True  # Make it false, and it will speed things up but not run the tracks
