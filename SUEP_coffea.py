@@ -1070,6 +1070,9 @@ class SUEP_cluster(processor.ProcessorABC):
                 out["genHpt"]  = self.genH.pt[:,0]
                 out["genHeta"] = self.genH.eta[:,0]
                 out["genHphi"] = self.genH.phi[:,0]
+		out["genSUEPpt"] = self.genSUEP.pt[:,0]
+                out["genSUEPeta"] = self.genSUEP.eta[:,0]
+                out["genSUEPphi"] = self.genSUEP.phi[:,0]
 
         return out
 
