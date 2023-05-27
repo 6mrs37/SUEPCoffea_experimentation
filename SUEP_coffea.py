@@ -506,8 +506,7 @@ class SUEP_cluster(processor.ProcessorABC):
 
         self.doTracks   = True  # Make it false, and it will speed things up but not run the tracks
         self.doClusters = True  # Make it false, and it will speed things up but not run the clusters
-        self.doGen      = False if not(self.isDY) else True # In case we want info on the gen level, we do need it for the buggy DY samples (to get proper stitching)
-
+        self.doGen      = True  # Make it false, and it will speed things up but not get gen info
         # Main processor code
         # ------------------------------------------------------------------------------------
         # ------------------------------- DEFINE OUTPUTS -------------------------------------
