@@ -213,7 +213,7 @@ class SUEP_cluster(processor.ProcessorABC):
             "mass": events.Muon.mass,
             "charge": events.Muon.pdgId/(-13),
         }, with_name="Momentum4D")
-	
+    
         electrons = ak.zip({
             "pt": events.Electron.pt,
             "eta": events.Electron.eta,
@@ -285,7 +285,7 @@ class SUEP_cluster(processor.ProcessorABC):
               "phi": altJets.phi,
               "mass": altJets.mass,
               "btag": altJets.btagDeepFlavB,
-              "jetId": altJets.jetId
+              "jetId": altJets.jetId,
             }, with_name="Momentum4D")
  
         # Minimimum pT, eta requirements + jet-lepton recleaning
@@ -314,7 +314,7 @@ class SUEP_cluster(processor.ProcessorABC):
             #(events.PFCands.dzErr < 0.05)
         Cleaned_cands = ak.packed(Cands[cutPF])
 
-	### LOST TRACKS ###
+    ### LOST TRACKS ###
         # Unidentified tracks, usually SUEP Particles
         LostTracks = ak.zip({
             "pt": events.lostTracks.pt,
@@ -336,45 +336,49 @@ class SUEP_cluster(processor.ProcessorABC):
         # dimensions of tracks = events x tracks in event x 4 momenta
         totalTracks = ak.concatenate([Cleaned_cands, Lost_Tracks_cands], axis=1)
         if self.doTracksGenMatching: # Not always activated, as quite time consuming and only needed for specific tests
-          #### SIMTRACKS, for gen matching association ####
-          SimTracks = ak.zip({
-            "pt": events.SimTracks.pt,
-            "eta": events.SimTracks.eta,
-            "phi": events.SimTracks.phi,
-            "mass":  events.SimTracks.mass,
-            "igen": events.SimTracks.igenPart,
-            "fromSUEP": False,
-          }, with_name="Momentum4D")
-          #### SIMTRACK - GENPART Matching (This is done based on geant hit info
-          GenParts  = ak.zip({
-            "pdgId"   : events.GenPart.pdgId,
-            "motherId": events.GenPart.genPartIdxMother,
-            "status"  : events.GenPart.status,
-            "fromSUEP": -1,
-          })
-          while(ak.any(GenParts.fromSUEP < 0)):
-            # To each GenPart assign to a SUEP if it appears on the decay of a SUEP, while loop iterates over the decay chain
-            #print(ak.sum(GenParts.fromSUEP == -4), ak.sum(GenParts.fromSUEP == -3), ak.sum(GenParts.fromSUEP == -1), ak.sum(GenParts.fromSUEP == -0), ak.sum(GenParts.fromSUEP == 1),ak.sum(GenParts.fromSUEP == 2), ak.sum(GenParts.fromSUEP == 3), ak.sum(GenParts.fromSUEP == 4))
-            GenParts.fromSUEP = ak.where((GenParts.motherId == -1) & (GenParts.fromSUEP==-3) ,   3, GenParts.fromSUEP) # UE
-            GenParts.fromSUEP = ak.where((GenParts.motherId == -1) & (GenParts.fromSUEP==-4) ,   4, GenParts.fromSUEP) # ISR
-            GenParts.fromSUEP = ak.where((GenParts.motherId == -1) & (GenParts.fromSUEP==-1) ,   0, GenParts.fromSUEP)    # 0 means matched to PU
-            GenParts.fromSUEP = ak.where(GenParts.pdgId    ==  999998, 1, GenParts.fromSUEP) # 1 means matched to SUEP
-            GenParts.fromSUEP = ak.where(GenParts.pdgId    ==  23    , 2, GenParts.fromSUEP) # 2 means matched to Z
-            GenParts.fromSUEP = ak.where((GenParts.status   ==  63) & (GenParts.fromSUEP < 0)  , -3, GenParts.fromSUEP) # -3 means UE track
-            GenParts.fromSUEP = ak.where((GenParts.status   ==  61) & (GenParts.fromSUEP < 0)  , -4, GenParts.fromSUEP) # -4 means emission from primary but it can still be H/Z so -1 until chain ends
-            GenParts.pdgId    = ak.where(GenParts.fromSUEP < 0, GenParts[GenParts.motherId].pdgId, GenParts.pdgId)
-            GenParts.motherId = ak.where(GenParts.fromSUEP < 0, GenParts[GenParts.motherId].motherId, GenParts.motherId)
-            GenParts.status = ak.where(GenParts.fromSUEP < 0, GenParts[GenParts.motherId].status, GenParts.status)
-            GenParts.fromSUEP = ak.where(GenParts.pdgId    ==  999998, 1, GenParts.fromSUEP)
-          # SimTrack - GenPart association is saved in our customized miniAOD (=>customized nanoAOD) already
-          SimTracks.fromSUEP   = ak.where(SimTracks.igen >= 0, GenParts.fromSUEP[SimTracks.igen] == 1, False)
-          newtotaltracks, newsimtracks = ak.unzip(ak.cartesian([totalTracks, SimTracks], axis=1, nested=True))
-          alldr2 = newtotaltracks.deltaR2(newsimtracks)
-          # SimTrack - RecoTrack association done geometrically, choose closest track within dR < 0.01
-          totalTracks.fromSUEP = ak.where(ak.min(alldr2, axis=2) < 0.01, SimTracks.fromSUEP[ak.argmin(alldr2, axis=2)], False)
-
+            #### SIMTRACKS, for gen matching association ####
+            SimTracks = ak.zip({
+                "pt": events.SimTracks.pt,
+                "eta": events.SimTracks.eta,
+                "phi": events.SimTracks.phi,
+                "mass":  events.SimTracks.mass,
+                "igen": events.SimTracks.igenPart,
+                "fromSUEP": False,
+            }, with_name="Momentum4D")
+            #### SIMTRACK - GENPART Matching (This is done based on geant hit info
+            GenParts  = ak.zip({
+                "pdgId"   : events.GenPart.pdgId,
+                "motherId": events.GenPart.genPartIdxMother,
+                "status"  : events.GenPart.status,
+                "fromSUEP": -1,
+            })
+            while(ak.any(GenParts.fromSUEP < 0)):
+                # To each GenPart assign to a SUEP if it appears on the decay of a SUEP, while loop iterates over the decay chain
+                #print(ak.sum(GenParts.fromSUEP == -4), ak.sum(GenParts.fromSUEP == -3), ak.sum(GenParts.fromSUEP == -1), ak.sum(GenParts.fromSUEP == -0), ak.sum(GenParts.fromSUEP == 1),ak.sum(GenParts.fromSUEP == 2), ak.sum(GenParts.fromSUEP == 3), ak.sum(GenParts.fromSUEP == 4))
+                GenParts.fromSUEP = ak.where((GenParts.motherId == -1) & (GenParts.fromSUEP==-3) ,   3, GenParts.fromSUEP) # UE
+                GenParts.fromSUEP = ak.where((GenParts.motherId == -1) & (GenParts.fromSUEP==-4) ,   4, GenParts.fromSUEP) # ISR
+                GenParts.fromSUEP = ak.where((GenParts.motherId == -1) & (GenParts.fromSUEP==-1) ,   0, GenParts.fromSUEP)    # 0 means matched to PU
+                GenParts.fromSUEP = ak.where(GenParts.pdgId    ==  999998, 1, GenParts.fromSUEP) # 1 means matched to SUEP
+                GenParts.fromSUEP = ak.where(GenParts.pdgId    ==  23    , 2, GenParts.fromSUEP) # 2 means matched to Z
+                GenParts.fromSUEP = ak.where((GenParts.status   ==  63) & (GenParts.fromSUEP < 0)  , -3, GenParts.fromSUEP) # -3 means UE track
+                GenParts.fromSUEP = ak.where((GenParts.status   ==  61) & (GenParts.fromSUEP < 0)  , -4, GenParts.fromSUEP) # -4 means emission from primary but it can still be H/Z so -1 until chain ends
+                GenParts.pdgId    = ak.where(GenParts.fromSUEP < 0, GenParts[GenParts.motherId].pdgId, GenParts.pdgId)
+                GenParts.motherId = ak.where(GenParts.fromSUEP < 0, GenParts[GenParts.motherId].motherId, GenParts.motherId)
+                GenParts.status = ak.where(GenParts.fromSUEP < 0, GenParts[GenParts.motherId].status, GenParts.status)
+                GenParts.fromSUEP = ak.where(GenParts.pdgId    ==  999998, 1, GenParts.fromSUEP)
+            # SimTrack - GenPart association is saved in our customized miniAOD (=>customized nanoAOD) already
+            SimTracks.fromSUEP   = ak.where(SimTracks.igen >= 0, GenParts.fromSUEP[SimTracks.igen] == 1, False)
+            newtotaltracks, newsimtracks = ak.unzip(ak.cartesian([totalTracks, SimTracks], axis=1, nested=True))
+            alldr2 = newtotaltracks.deltaR2(newsimtracks)
+            # SimTrack - RecoTrack association done geometrically, choose closest track within dR < 0.01
+            totalTracks.fromSUEP = ak.where(ak.min(alldr2, axis=2) < 0.01, SimTracks.fromSUEP[ak.argmin(alldr2, axis=2)], False)
+        
         # Sorting out the tracks that overlap with leptons
-        totalTracks = totalTracks[(totalTracks.deltaR(leptons[:,0])>= 0.4) & (totalTracks.deltaR(leptons[:,1])>= 0.4)]
+        fromSUEP_temp = totalTracks.fromSUEP
+        cut = (totalTracks.deltaR(leptons[:,0])>= 0.4) & (totalTracks.deltaR(leptons[:,1])>= 0.4)
+        totalTracks = totalTracks[cut]
+        fromSUEP_temp = fromSUEP_temp[cut]
+        totalTracks.fromSUEP = fromSUEP_temp
         nTracks = ak.num(totalTracks,axis=1)
         return events, totalTracks, nTracks, [coll for coll in extraColls]
 
@@ -420,7 +424,6 @@ class SUEP_cluster(processor.ProcessorABC):
           ak15_consts.fromSUEP = ak.where(ak.min(alldr2, axis=2) < 0.01, tracks.fromSUEP[ak.argmin(alldr2, axis=2)], False) # I.e. if dR(track, constituent) < 0.01 for at least one track, constituent inherits tagging of the closest track
           # And then we recast it to the proper size with this thing
           ak15_consts = ak.unflatten(ak15_consts, ak.flatten(shape), axis=1)
-
         return events, ak15_jets, ak15_consts
 
 
@@ -551,7 +554,7 @@ class SUEP_cluster(processor.ProcessorABC):
 
         # Jet selection
         self.events, self.jets = self.selectByJets(self.events, self.leptons)[:2] # Leptons are needed to do jet-lepton cleaning
-	# Sorting jets by pt.
+    # Sorting jets by pt.
         highpt_jets = ak.argsort(self.jets.pt, axis=1, ascending=False, stable=True)
         self.jets   = self.jets[highpt_jets]
         if not(self.shouldContinueAfterCut(self.events, outputs)): return accumulator
@@ -1056,6 +1059,8 @@ class SUEP_cluster(processor.ProcessorABC):
 
                     out["leadclusterSpher_L"] =  np.real(1.5*(evalsL[:,0] + evalsL[:,1]))
                     out["leadclusterSpher_C"] =  np.real(1.5*(evalsC[:,0] + evalsC[:,1]))
+                    
+                    #out["strip_px"], out["strip_py"], out["strip_pz"], out["strip_E"] = self.striptizeTracks(self.events, self.tracks)[,2]
 
         if self.doGen:
             if debug: print("Saving gen variables")
@@ -1069,9 +1074,6 @@ class SUEP_cluster(processor.ProcessorABC):
                 out["genHpt"]  = self.genH.pt[:,0]
                 out["genHeta"] = self.genH.eta[:,0]
                 out["genHphi"] = self.genH.phi[:,0]
-		out["genSUEPpt"] = self.genSUEP.pt[:,0]
-                out["genSUEPeta"] = self.genSUEP.eta[:,0]
-                out["genSUEPphi"] = self.genSUEP.phi[:,0]
 
         return out
 
