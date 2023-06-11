@@ -180,7 +180,6 @@ class SUEP_cluster(processor.ProcessorABC):
 			assert os.path.isfile(destination)
 		pathlib.Path(local_file).unlink()
 
-
 	def selectByFilters(self, events):
 		### Apply MET filter selection (see https://twiki.cern.ch/twiki/bin/viewauth/CMS/MissingETOptionalFiltersRun2)
 		if self.era == 2018 or self.era == 2017:
@@ -188,7 +187,6 @@ class SUEP_cluster(processor.ProcessorABC):
 		if self.era == 2016 or self.era == 2015: # 2015==2016APV
 			cutAnyFilter = (events.Flag.goodVertices) | (events.Flag.globalSuperTightHalo2016Filter) | (events.Flag.HBHENoiseFilter) | (events.Flag.HBHENoiseIsoFilter) | (events.Flag.EcalDeadCellTriggerPrimitiveFilter) | (events.Flag.BadPFMuonFilter) | (events.Flag.BadPFMuonDzFilter) | (events.Flag.eeBadScFilter)
 		return events[cutAnyFilter]
-
 
 	def selectByTrigger(self, events, extraColls = []):
 		### Apply trigger selection
@@ -429,26 +427,38 @@ class SUEP_cluster(processor.ProcessorABC):
 			ak15_consts.fromSUEP = fromSUEP_temp
 		return events, ak15_jets, ak15_consts
 
+	def striptizeTracks(self, events, tracks, etaWidth = .75): # Note that etaWidth now actually represents the width instead of half the width like it used to
+		etaCenters	 = np.linspace(-2.5, 2.5, 50) # Scan 50 eta values
+		optimalTracks = tracks[tracks.pt < 0] # Empty array of the size of number of events - We will save the tracks in the optimal eta band here
+		optimalEta = tracks[tracks.pt < 0] # Empty array of the size of number of events - We will save the optimal eta for each event here
 
-	def striptizeTracks(self, events, tracks, etaWidth=0.75):
-		etaCenters	 = np.linspace(-2.5, 2.5, 50) # Scan 50 eta values, so 0.1 resolution
-		tracksinBand = tracks
-		nInBand		 = ak.num(tracks) * -1 # So we always get towards better stuff
-		
 		for etaC in etaCenters:
-			cutInBand	 = (tracks.eta >= (etaC - etaWidth)) & (tracks.eta < (etaC + etaWidth))
-			trackstest	 = tracks[cutInBand]
-			ntest		 = ak.num(trackstest)
-			tracksinBand = ak.where(ntest >= nInBand, trackstest, tracksinBand)
-			nInBand		 = ak.where(ntest >= nInBand, ntest, nInBand)
-		band = ak.zip({
-			"px": ak.sum(tracksinBand.px, axis=1),
-			"py": ak.sum(tracksinBand.py, axis=1),
-			"pz": ak.sum(tracksinBand.pz, axis=1),
-			"E": ak.sum(tracksinBand.E, axis=1)
+			cutInBand	 = (tracks.eta >= (etaC - etaWidth/2)) & (tracks.eta < (etaC + etaWidth/2)) #Eta cut on tracks
+
+			fromSUEP_temp = tracks.fromSUEP
+			tracksinBand = tracks[cutInBand] #Tracks within our eta band
+			tracksinBand.fromSUEP = fromSUEP_temp[cutInBand]
+
+			nTracksinBand = ak.num(tracksinBand, axis = -1)
+			nTracksinOptimal = ak.num(optimalTracks, axis = -1)
+
+			fromSUEP_temp = ak.where(nTracksinBand > nTracksinOptimal, tracksinBand.fromSUEP, optimalTracks.fromSUEP)
+			optimalTracks = ak.where(nTracksinBand > nTracksinOptimal, tracksinBand, optimalTracks) #Whenever the number of tracks in the current band is greater than any band checked, save these tracks
+			optimalTracks.fromSUEP = fromSUEP_temp
+			optimalEta = ak.where(nTracksinBand > nTracksinOptimal, etaC, optimalEta) #Whenever the number of tracks in the current band is greater than any band checked, save this eta as the optimal eta
+
+		optimalBand = ak.zip({
+			"px": ak.sum(optimalTracks.px, axis=1),
+			"py": ak.sum(optimalTracks.py, axis=1),
+			"pz": ak.sum(optimalTracks.pz, axis=1),
+			#"eta": ak.mean(optimalTracks.eta, axis=1),
+			#"phi": ak.mean(optimalTracks.phi, axis=1),
+			"E": ak.sum(optimalTracks.E, axis=1),
+			#"etaCenter": optimalEta,
 		}, with_name="Momentum4D")
 
-		return events, band, tracksinBand
+		return events, optimalBand, optimalTracks
+    
 
 	def selectByGEN(self, events):
 		GenParts = ak.zip({
@@ -499,7 +509,6 @@ class SUEP_cluster(processor.ProcessorABC):
 		else: 
 			return True
 
-
 	def process(self, events):
 		np.random.seed(max(0,min(events.event[0], 2**31))) # This ensures reproducibility of results (i.e. for the random track dropping), while also getting different random numbers per file to avoid biases (like always dropping the first track, etc.)
 		debug    = True  # If we want some prints in the middle
@@ -512,6 +521,7 @@ class SUEP_cluster(processor.ProcessorABC):
 
 		self.doTracks   = True  # Make it false, and it will speed things up but not run the tracks
 		self.doClusters = True  # Make it false, and it will speed things up but not run the clusters
+		self.doStriptizing = True # Make it false, and it will speed things up but not run the striptizing
 		self.doGen      = True  # Make it false, and it will speed things up but not get gen info
 		# Main processor code
 		# ------------------------------------------------------------------------------------
@@ -571,7 +581,6 @@ class SUEP_cluster(processor.ProcessorABC):
 			if self.doClusters:
 				# This is the ak15 clustering step
 				self.events, self.clusters, self.constituents  = self.clusterizeTracks(self.events, self.tracks)[:3]
-				print(f"575, self.constituents.fromSUEP: {self.constituents.fromSUEP}, sum: {np.sum(self.constituents.fromSUEP)}")
 				highpt_clusters = ak.argsort(self.clusters.pt, axis=1, ascending=False, stable=True)
 				fromSUEP_temp = self.constituents.fromSUEP
 				self.clusters   = self.clusters[highpt_clusters]
@@ -646,6 +655,7 @@ class SUEP_cluster(processor.ProcessorABC):
 			if self.doTracks:
 				cutOneTrack = (ak.num(self.tracks) != 0)
 				self.applyCutToAllCollections(cutOneTrack)
+
 				self.isSpherable = True # So we do sphericity plots
 				if not(self.shouldContinueAfterCut(self.events, outputs)): return accumulator
 				if debug: print("%i events pass onetrack cuts. Doing more stuff..."%len(self.events))
@@ -708,7 +718,6 @@ class SUEP_cluster(processor.ProcessorABC):
 
 		return accumulator
 
-
 	def applyCutToAllCollections(self, cut): # Cut has to by a selection applicable across all collections, i.e. something defined per event
 		self.events    = self.events[cut]
 		self.electrons = self.electrons[cut]
@@ -728,9 +737,11 @@ class SUEP_cluster(processor.ProcessorABC):
 
 
 		if self.doTracks:
+			fromSUEP_temp = self.tracks.fromSUEP
 			self.tracks  = self.tracks[cut]
+			self.tracks.fromSUEP = fromSUEP_temp[cut]
 			if self.doClusters:
-				self.clusters     = self.clusters[cut]
+				self.clusters = self.clusters[cut]
 				fromSUEP_temp = self.constituents.fromSUEP
 				self.constituents = self.constituents[cut]
 				self.constituents.fromSUEP = fromSUEP_temp[cut]
@@ -826,7 +837,6 @@ class SUEP_cluster(processor.ProcessorABC):
 			if WP == "Medium": return 0.2783
 			if WP == "Tight":  return 0.7100
 		
-
 	def doISRWeights(self, events):
 		out = {}
 		if len(events.PSWeight[0,:]) > 3: 
@@ -960,7 +970,6 @@ class SUEP_cluster(processor.ProcessorABC):
 		effs = np.where(abs(jets.hadronFlavour) == 5, effsLoad["B"](jets.pt, np.abs(jets.eta)), effs)
 		return effs
 
-
 	def doJECJERVariations(self, events, jets):
 		jets_corrected = apply_jecs(isMC=self.isMC, Sample=self.sample, era=self.era, events=events, doStoc=True)
 		jetsOut = {"":       self.selectByJets(events, self.leptons, jets_corrected)[1],
@@ -970,7 +979,6 @@ class SUEP_cluster(processor.ProcessorABC):
 				   "_JERDOWN": self.selectByJets(events, self.leptons, jets_corrected["JER"].down)[1],
 				  }
 		return jetsOut
-
 
 	def doAllPlots(self, channel, debug=True):
 		# ------------------------------------------------------------------------------
@@ -1049,41 +1057,71 @@ class SUEP_cluster(processor.ProcessorABC):
 			out["ntracks"]     = ak.num(self.tracks, axis=1)[:]
 			if self.isSpherable:
 				if self.doClusters and self.isClusterable:
-					out["nclusters"]           = ak.num(self.clusters, axis=1)[:]
-					out["leadcluster_pt"]      = self.clusters.pt[:,0]
-					out["leadcluster_eta"]     = self.clusters.eta[:,0]
-					out["leadcluster_phi"]     = self.clusters.phi[:,0]
-					out["leadcluster_ntracks"] = ak.num(self.constituents[:,0], axis = 1)
+					out["nclusters"] = ak.num(self.clusters, axis=1)[:]
+					
+					# Lead cluster stats
+					leadingclustertracks = self.constituents[:,0]
+					leadingclustertracks.fromSUEP = self.constituents.fromSUEP[:,0]
+					out["leadcluster_ntracks"] = ak.num(leadingclustertracks, axis = 1)
+					
+					out["leadcluster_pt"]	= self.clusters.pt[:,0]
+					out["leadcluster_eta"]	= self.clusters.eta[:,0]
+					out["leadcluster_phi"]	= self.clusters.phi[:,0]
+					out["leadcluster_px"]	= self.clusters.px[:,0]
+					out["leadcluster_py"]	= self.clusters.py[:,0]
+					out["leadcluster_pz"]	= self.clusters.pz[:,0]
+					out["leadcluster_E"]	= self.clusters.E[:,0]
+					out["leadcluster_p"]	= self.clusters.p[:,0]
 					boost_leading = ak.zip({
 					  "px": self.clusters[:,0].px*-1,
 					  "py": self.clusters[:,0].py*-1,
 					  "pz": self.clusters[:,0].pz*-1,
 					  "mass": self.clusters[:,0].mass
 					}, with_name="Momentum4D")
-
-					leadingclustertracks = self.constituents[:,0]
-					leadingclustertracks.fromSUEP = self.constituents.fromSUEP[:,0]
-					out["clusterizer_purity"] = np.array([np.sum(i) / ak.count(i) for i in leadingclustertracks.fromSUEP])
-					leadingclustertracks_boostedagainstSUEP   = leadingclustertracks.boost_p4(boost_leading)
 					
-					evalsL = self.sphericity(self.events, leadingclustertracks, 2) 
-					evalsC = self.sphericity(self.events, leadingclustertracks_boostedagainstSUEP, 2)
-
+					# Sphericity calculations					
+					evalsL = self.sphericity(self.events, leadingclustertracks, 2)
 					out["leadclusterSpher_L"] =  np.real(1.5*(evalsL[:,0] + evalsL[:,1]))
+					
+					leadingclustertracks_boostedagainstSUEP   = leadingclustertracks.boost_p4(boost_leading)
+					evalsC = self.sphericity(self.events, leadingclustertracks_boostedagainstSUEP, 2)
 					out["leadclusterSpher_C"] =  np.real(1.5*(evalsC[:,0] + evalsC[:,1]))
 					
+					# Efficiency and Purity calculations
+					out["ak15_purity"] = np.array([np.sum(i) / ak.count(i) for i in leadingclustertracks.fromSUEP])
+					out["ak15_eff"] = np.array([np.sum(leadingclustertracks.fromSUEP[i]) / np.sum(self.tracks.fromSUEP[i]) for i in range(len(self.tracks))])
+					
+			if self.doStriptizing:
+				for etaWidth in [0.75]: #
+					self.events, self.band, self.tracksInBand = self.striptizeTracks(self.events, self.tracks, etaWidth)
+					out[f"{etaWidth}_strip_pt"]	 = self.band.pt
+					out[f"{etaWidth}_strip_eta"] = self.band.eta
+					out[f"{etaWidth}_strip_phi"] = self.band.phi
+					out[f"{etaWidth}_strip_px"]	 = self.band.px
+					out[f"{etaWidth}_strip_py"]	 = self.band.py
+					out[f"{etaWidth}_strip_pz"]	 = self.band.pz
+					out[f"{etaWidth}_strip_E"]	 = self.band.E
+					out[f"{etaWidth}_strip_p"]	 = self.band.p
+					out[f"{etaWidth}_strip_purity"]= np.array([np.sum(i) / ak.count(i) for i in self.tracksInBand.fromSUEP])
+					out[f"{etaWidth}_strip_eff"] = np.array([np.sum(self.tracksInBand.fromSUEP[i]) / np.sum(self.tracks.fromSUEP[i]) for i in range(len(self.tracks))])
+
 		if self.doGen:
 			if debug: print("Saving gen variables")
 			if self.isDY:
-				out["genZpt"]  = self.Zpt
+				out["genZ_pt"]  = self.Zpt
 
 			else:
-				out["genZpt"]  = self.genZ.pt[:,0]
-				out["genZeta"] = self.genZ.eta[:,0]
-				out["genZphi"] = self.genZ.phi[:,0] 
-				out["genHpt"]  = self.genH.pt[:,0]
-				out["genHeta"] = self.genH.eta[:,0]
-				out["genHphi"] = self.genH.phi[:,0]
+				out["genZ_pt"]	= self.genZ.pt[:,0]
+				out["genZ_eta"]	= self.genZ.eta[:,0]
+				out["genZ_phi"]	= self.genZ.phi[:,0]
+				out["genH_pt"]	= self.genH.pt[:,0]
+				out["genH_eta"]	= self.genH.eta[:,0]
+				out["genH_phi"]	= self.genH.phi[:,0]
+				out["genH_px"]	= self.genH.px[:,0]
+				out["genH_py"]	= self.genH.py[:,0]
+				out["genH_pz"]	= self.genH.pz[:,0]
+				out["genH_E"]	= self.genH.E[:,0]
+				out["genH_p"]	= self.genH.p[:,0]
 		return out
 
 	def postprocess(self, accumulator):
