@@ -3,6 +3,7 @@ SUEP_coffea_ZH.py
 Coffea producer for SUEP analysis. Uses fastjet package to recluster large jets:
 https://github.com/scikit-hep/fastjet
 Chad Freer, 2021
+(:	:)
 """
 
 import os
