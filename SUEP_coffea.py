@@ -429,8 +429,8 @@ class SUEP_cluster(processor.ProcessorABC):
     def striptizeTracks(self, events, tracks, etaWidth = .75): # Note that etaWidth now actually represents the width instead of half the width like it used to
         etaCenters	 = np.linspace(-2.5, 2.5, 50) # Scan 50 eta values
         optimalTracks = tracks[tracks.pt < 0] # Empty array of the size of number of events - We will save the tracks in the optimal eta band here
-        optimalEta = tracks[tracks.pt < 0] # Empty array of the size of number of events - We will save the optimal eta for each event here
-
+        optimalEta = np.empty(len(tracks)) # Empty array of the size of number of events - We will save the optimal eta for each event here
+        
         for etaC in etaCenters:
             cutInBand	 = (tracks.eta >= (etaC - etaWidth/2)) & (tracks.eta < (etaC + etaWidth/2)) #Eta cut on tracks
 
@@ -455,8 +455,7 @@ class SUEP_cluster(processor.ProcessorABC):
             "E": ak.sum(optimalTracks.E, axis=1),
             #"etaCenter": optimalEta,
         }, with_name="Momentum4D")
-
-        return events, optimalBand, optimalTracks
+        return events, optimalBand, optimalTracks, optimalEta
     
 
     def selectByGEN(self, events):
@@ -1091,18 +1090,27 @@ class SUEP_cluster(processor.ProcessorABC):
                     out["ak15_eff"] = np.array([np.sum(leadingclustertracks.fromSUEP[i]) / np.sum(self.tracks.fromSUEP[i]) for i in range(len(self.tracks))])
                     
             if self.doStriptizing:
-                for etaWidth in [0.75]: #
-                    self.events, self.band, self.tracksInBand = self.striptizeTracks(self.events, self.tracks, etaWidth)
-                    out[f"{etaWidth}_strip_pt"]	 = self.band.pt
-                    out[f"{etaWidth}_strip_eta"] = self.band.eta
-                    out[f"{etaWidth}_strip_phi"] = self.band.phi
-                    out[f"{etaWidth}_strip_px"]	 = self.band.px
-                    out[f"{etaWidth}_strip_py"]	 = self.band.py
-                    out[f"{etaWidth}_strip_pz"]	 = self.band.pz
-                    out[f"{etaWidth}_strip_E"]	 = self.band.E
-                    out[f"{etaWidth}_strip_p"]	 = self.band.p
-                    out[f"{etaWidth}_strip_purity"]= np.array([np.sum(i) / ak.count(i) for i in self.tracksInBand.fromSUEP])
-                    out[f"{etaWidth}_strip_eff"] = np.array([np.sum(self.tracksInBand.fromSUEP[i]) / np.sum(self.tracks.fromSUEP[i]) for i in range(len(self.tracks))])
+                # all_data = {}
+                # for etaWidth in np.linspace(0.2,3.2,31):
+                #     self.events, self.band, self.tracksInBand = self.striptizeTracks(self.events, self.tracks, etaWidth)
+                #     all_data[(etaWidth, "pt")] = self.band.pt
+                #     all_data[(etaWidth, "eta")] = self.band.eta
+                #     all_data[(etaWidth, "phi")]: self.band.phi
+                #     all_data[(etaWidth, "px")]: self.band.px
+                #     all_data[(etaWidth, "py")]: self.band.py
+                #     all_data[(etaWidth, "pz")]: self.band.pz
+                #     all_data[(etaWidth, "E")]: self.band.E
+                #     all_data[(etaWidth, "p")]: self.band.p
+                #     all_data[(etaWidth, "purity")] = np.array([np.sum(i) / ak.count(i) for i in self.tracksInBand.fromSUEP])
+                #     all_data[(etaWidth, "eff")] = np.array([np.sum(self.tracksInBand.fromSUEP[i]) / np.sum(self.tracks.fromSUEP[i]) for i in range(len(self.tracks))])
+                # df = pd.DataFrame(all_data)
+                # df.to_hdf(,df, key=channel, mode='w')
+                
+                for etaWidth in np.linspace(0.8,1.7,10):
+                    self.events, self.band, self.tracksInBand, self.etaCenters = self.striptizeTracks(self.events, self.tracks, etaWidth)
+                    out[f"{etaWidth}_eff"] = np.array([np.sum(self.tracksInBand.fromSUEP[i]) / np.sum(self.tracks.fromSUEP[i]) for i in range(len(self.tracks))])
+                    out[f"{etaWidth}_purity"] = np.array([np.sum(i) / ak.count(i) for i in self.tracksInBand.fromSUEP])
+                    out[f"{etaWidth}_etaCenters"] = self.etaCenters
 
         if self.doGen:
             if debug: print("Saving gen variables")
